@@ -64,7 +64,7 @@ async def send_request(encrypted_uid, token, url):
             'Expect': "100-continue",
             'X-Unity-Version': "2018.4.11f1",
             'X-GA': "v1 1",
-            'ReleaseVersion': "OB49"
+            'ReleaseVersion': "OB50"
         }
         async with aiohttp.ClientSession() as session:
             async with session.post(url, data=edata, headers=headers) as response:
@@ -136,7 +136,7 @@ def make_request(encrypt, server_name, token):
             'Expect': "100-continue",
             'X-Unity-Version': "2018.4.11f1",
             'X-GA': "v1 1",
-            'ReleaseVersion': "OB49"
+            'ReleaseVersion': "OB50"
         }
         response = requests.post(url, data=edata, headers=headers, verify=False)
         hex_data = response.content.hex()
@@ -165,12 +165,6 @@ def decode_protobuf(binary):
 def handle_requests():
     uid = request.args.get("uid")
     server_name = request.args.get("server_name", "").upper()
-    key = request.args.get("key", "")
-
-    # 🔐 API Key Validation
-    if key != "ghost_modx":
-        return jsonify({"error": "INVALID API KEY"}), 403
-
     if not uid or not server_name:
         return jsonify({"error": "UID and server_name are required"}), 400
 
@@ -187,9 +181,17 @@ def handle_requests():
             before = make_request(encrypted_uid, server_name, token)
             if before is None:
                 raise Exception("Failed to retrieve initial player info.")
-            jsone = MessageToJson(before)
+            try:
+                jsone = MessageToJson(before)
+            except Exception as e:
+                raise Exception(f"Error converting 'before' protobuf to JSON: {e}")
             data_before = json.loads(jsone)
-            before_like = int(data_before.get('AccountInfo', {}).get('Likes', 0))
+            before_like = data_before.get('AccountInfo', {}).get('Likes', 0)
+            try:
+                before_like = int(before_like)
+            except Exception:
+                before_like = 0
+            app.logger.info(f"Likes before command: {before_like}")
 
             if server_name == "IND":
                 url = "https://client.ind.freefiremobile.com/LikeProfile"
@@ -201,23 +203,25 @@ def handle_requests():
             asyncio.run(send_multiple_requests(uid, server_name, url))
 
             after = make_request(encrypted_uid, server_name, token)
-            jsone_after = MessageToJson(after)
+            if after is None:
+                raise Exception("Failed to retrieve player info after like requests.")
+            try:
+                jsone_after = MessageToJson(after)
+            except Exception as e:
+                raise Exception(f"Error converting 'after' protobuf to JSON: {e}")
             data_after = json.loads(jsone_after)
             after_like = int(data_after.get('AccountInfo', {}).get('Likes', 0))
             player_uid = int(data_after.get('AccountInfo', {}).get('UID', 0))
             player_name = str(data_after.get('AccountInfo', {}).get('PlayerNickname', ''))
             like_given = after_like - before_like
             status = 1 if like_given != 0 else 2
-
             result = {
                 "LikesGivenByAPI": like_given,
-                "LikesbeforeCommand": before_like,
                 "LikesafterCommand": after_like,
+                "LikesbeforeCommand": before_like,
                 "PlayerNickname": player_name,
                 "UID": player_uid,
-                "status": status,
-                "Telegram_Channel": "YOUR CNL NAME",
-                "Contact_Developer": "YOUR_USERNAME"
+                "status": status
             }
             return result
 
